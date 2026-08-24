@@ -4,6 +4,8 @@ import os
 import av
 import cv2
 import mediapipe as mp
+from mediapipe.python.solutions import drawing_utils as mp_drawing
+from mediapipe.python.solutions import pose as mp_pose
 import numpy as np
 import streamlit as st
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
@@ -133,9 +135,7 @@ if st.session_state.user_data:
       "請確保全身入鏡，完成深蹲時手機將會透過語音報數。"
   )
 
-  # MediaPipe 初始化設定
-  mp_drawing = mp.solutions.drawing_utils
-  mp_pose = mp.solutions.pose
+  
 
 
   # 定義影像處理回呼函數
