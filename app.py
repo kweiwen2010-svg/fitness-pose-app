@@ -3,11 +3,10 @@ import numpy as np
 import cv2
 import streamlit as st
 from streamlit_webrtc import VideoProcessorBase, webrtc_streamer, WebRtcMode, RTCConfiguration
-import mediapipe as mp
 
-# 載入 MediaPipe 模組
-mp_drawing = mp.solutions.drawing_utils
-mp_pose = mp.solutions.pose
+# 直接匯入 MediaPipe solutions 子模組，避免 AttributeError
+import mediapipe.solutions.drawing_utils as mp_drawing
+import mediapipe.solutions.pose as mp_pose
 
 # 計算關節角度
 def calculate_angle(a, b, c):
