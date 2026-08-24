@@ -4,13 +4,10 @@ import cv2
 import streamlit as st
 from streamlit_webrtc import VideoProcessorBase, webrtc_streamer, WebRtcMode, RTCConfiguration
 
-# 1. 安全載入 MediaPipe 模組 (解決 MediaPipe 0.10+ 在 Linux 雲端環境上的解決方案)
+# 1. 顯式匯入 MediaPipe Solutions 模組 (解決 AttributeError)
 import mediapipe as mp
-
-# 透過 getattr 強制觸發 MediaPipe 內部的 lazy-loading 屬性
-mp_solutions = getattr(mp, "solutions")
-mp_drawing = mp_solutions.drawing_utils
-mp_pose = mp_solutions.pose
+import mediapipe.python.solutions.drawing_utils as mp_drawing
+import mediapipe.python.solutions.pose as mp_pose
 
 # 2. 計算關節角度函式
 def calculate_angle(a, b, c):
