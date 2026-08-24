@@ -3,28 +3,24 @@ import numpy as np
 import cv2
 import streamlit as st
 from streamlit_webrtc import VideoProcessorBase, webrtc_streamer, WebRtcMode, RTCConfiguration
-
-# 1. 安全載入 MediaPipe Solutions 模組 (解決 OpenCV 與 Linux 雲端環境上的相容問題)
 import mediapipe as mp
-import mediapipe.python.solutions as mp_solutions
 
-mp_drawing = mp_solutions.drawing_utils
-mp_pose = mp_solutions.pose
+# 載入 MediaPipe 模組
+mp_drawing = mp.solutions.drawing_utils
+mp_pose = mp.solutions.pose
 
-# 2. 計算關節角度函式
+# 計算關節角度
 def calculate_angle(a, b, c):
-    a = np.array(a)  # 首節點 (髖關節)
-    b = np.array(b)  # 中間點 (膝蓋)
-    c = np.array(c)  # 尾節點 (腳踝)
-    
+    a = np.array(a)
+    b = np.array(b)
+    c = np.array(c)
     radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
     angle = np.abs(radians * 180.0 / np.pi)
-    
     if angle > 180.0:
         angle = 360 - angle
     return angle
 
-# 3. WebRTC 影像處理類別
+# WebRTC 姿態處理器
 class PoseProcessor(VideoProcessorBase):
     def __init__(self):
         self.pose = mp_pose.Pose(
@@ -32,19 +28,15 @@ class PoseProcessor(VideoProcessorBase):
             min_tracking_confidence=0.5
         )
         self.counter = 0
-        self.stage = None  # "up" 或 "down"
+        self.stage = None
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        
-        # 轉成 RGB 供 MediaPipe 分析
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         results = self.pose.process(img_rgb)
         
         if results.pose_landmarks:
             landmarks = results.pose_landmarks.landmark
-            
-            # 取得左側關鍵關節座標
             hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
                    landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
             knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
@@ -52,17 +44,14 @@ class PoseProcessor(VideoProcessorBase):
             ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
                      landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
             
-            # 計算膝蓋彎曲角度
             angle = calculate_angle(hip, knee, ankle)
             
-            # 深蹲動作判定邏輯
             if angle < 90:
                 self.stage = "down"
             if angle > 160 and self.stage == "down":
                 self.stage = "up"
                 self.counter += 1
 
-            # 在畫面上畫出人體骨架
             mp_drawing.draw_landmarks(
                 img,
                 results.pose_landmarks,
@@ -71,7 +60,6 @@ class PoseProcessor(VideoProcessorBase):
                 mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2)
             )
 
-            # 在畫面上繪製計數資訊欄
             cv2.rectangle(img, (0, 0), (250, 80), (245, 117, 16), -1)
             cv2.putText(img, f'REPS: {self.counter}', (10, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
@@ -80,12 +68,11 @@ class PoseProcessor(VideoProcessorBase):
 
         return frame.from_ndarray(img, format="bgr24")
 
-# 4. Streamlit 介面佈局
+# UI 設定
 st.set_page_config(page_title="AI 深蹲計數器", layout="centered")
 st.title("🏋️‍♂️ AI 深蹲計數器")
 st.info("目前選擇：深蹲 (Squat) - 雙側追蹤。請確保全身入鏡，完成深蹲時將自動計數。")
 
-# Google 公開 STUN 伺服器設定 (確保跨網路視訊連線穩定)
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
