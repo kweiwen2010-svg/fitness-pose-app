@@ -3,23 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI 深蹲計數器</title>
+  <title>AI 深蹲姿勢矯正助手</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 15px; }
-    .status-card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 15px; font-size: 1.2rem; font-weight: bold; }
-    .highlight { color: #00ffcc; font-size: 1.6rem; }
+    .status-card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 15px; }
+    .feedback { font-size: 1.3rem; font-weight: bold; margin-top: 8px; padding: 8px 12px; border-radius: 8px; display: inline-block; }
+    .good { background: #1b4332; color: #52b788; }
+    .warning { background: #5c1d24; color: #ff6b6b; }
+    .info { color: #00ffcc; font-size: 1.2rem; font-weight: bold; }
     .container { position: relative; width: 100%; max-width: 480px; margin: 0 auto; }
     video { display: none; }
     canvas { width: 100%; border-radius: 12px; background: #000; transform: scaleX(-1); }
   </style>
 </head>
 <body>
-  <h2>🏋️‍♂️ AI 深蹲計數器</h2>
+  <h2>🏋️‍♂️ AI 深蹲姿勢矯正助手</h2>
   <div class="status-card">
-    次數：<span id="count" class="highlight">0</span> 次 | 狀態：<span id="stage" class="highlight">準備中</span>
+    <div>標準次數：<span id="count" class="info">0</span> 次</div>
+    <div id="feedback" class="feedback good">請側面側對鏡頭，準備下蹲</div>
   </div>
   <div class="container">
     <video id="input_video" playsinline></video>
@@ -31,16 +35,45 @@
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
     const countEl = document.getElementById('count');
-    const stageEl = document.getElementById('stage');
+    const feedbackEl = document.getElementById('feedback');
 
     let count = 0;
-    let stage = null;
+    let stage = 'up';
+    let minKneeAngle = 180;
+    let lastSpeechTime = 0;
 
-    function findAngle(p1, p2, p3) {
-      let radians = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+    // 手機語音提醒（避免重複密集的語音干擾）
+    function speak(text) {
+      const now = Date.now();
+      if (now - lastSpeechTime > 2200) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'zh-TW';
+        window.speechSynthesis.speak(utterance);
+        lastSpeechTime = now;
+      }
+    }
+
+    function findAngle(a, b, c) {
+      let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
       let angle = Math.abs(radians * 180.0 / Math.PI);
       if (angle > 180.0) angle = 360 - angle;
       return angle;
+    }
+
+    function getTorsoLean(shoulder, hip) {
+      let dx = shoulder.x - hip.x;
+      let dy = shoulder.y - hip.y;
+      return Math.abs(Math.atan2(dx, -dy) * 180.0 / Math.PI);
+    }
+
+    function setFeedback(msg, isWarning = false) {
+      feedbackEl.innerText = msg;
+      if (isWarning) {
+        feedbackEl.className = "feedback warning";
+        speak(msg.replace('⚠️ ', ''));
+      } else {
+        feedbackEl.className = "feedback good";
+      }
     }
 
     function onResults(results) {
@@ -52,26 +85,52 @@
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
       if (results.poseLandmarks) {
-        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
-        drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2});
+        const landmarks = results.poseLandmarks;
+        const shoulder = landmarks[11];
+        const hip = landmarks[23];
+        const knee = landmarks[25];
+        const ankle = landmarks[27];
 
-        const hip = results.poseLandmarks[23];  // 左髖
-        const knee = results.poseLandmarks[25]; // 左膝
-        const ankle = results.poseLandmarks[27];// 左腳踝
+        if (shoulder && hip && knee && ankle) {
+          const kneeAngle = findAngle(hip, knee, ankle);
+          const torsoLean = getTorsoLean(shoulder, hip);
+          const kneeOverToe = (knee.x - ankle.x);
 
-        if (hip && knee && ankle) {
-          const angle = findAngle(hip, knee, ankle);
+          let skeletonColor = '#00FF00';
+          let isWarning = false;
+          let currentAdvice = "姿勢良好";
 
-          if (angle < 90) {
-            stage = "down";
-            stageEl.innerText = "深蹲中";
+          if (kneeAngle < 140) {
+            if (kneeAngle < minKneeAngle) minKneeAngle = kneeAngle;
+
+            if (torsoLean > 40) {
+              currentAdvice = "⚠️ 上半身過度前傾！請挺胸";
+              isWarning = true;
+            } else if (kneeOverToe > 0.12) {
+              currentAdvice = "⚠️ 膝蓋過度前壓！重心往後移";
+              isWarning = true;
+            }
+            stage = 'down';
           }
-          if (angle > 160 && stage === "down") {
-            stage = "up";
-            count++;
-            countEl.innerText = count;
-            stageEl.innerText = "完成";
+
+          if (kneeAngle > 160 && stage === 'down') {
+            if (minKneeAngle > 100) {
+              setFeedback("⚠️ 蹲得不夠深！大腿需平行地面", true);
+            } else if (!isWarning) {
+              count++;
+              countEl.innerText = count;
+              setFeedback("✅ 標準深蹲 +1！", false);
+              speak("標準");
+            }
+            stage = 'up';
+            minKneeAngle = 180;
+          } else if (stage === 'down') {
+            setFeedback(currentAdvice, isWarning);
+            skeletonColor = isWarning ? '#FF0000' : '#00FF00';
           }
+          
+          drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: skeletonColor, lineWidth: 4});
+          drawLandmarks(canvasCtx, landmarks, {color: '#FFFFFF', lineWidth: 2});
         }
       }
       canvasCtx.restore();
