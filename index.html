@@ -23,7 +23,7 @@
   <h2>🏋️‍♂️ AI 深蹲姿勢矯正助手</h2>
   <div class="status-card">
     <div>標準次數：<span id="count" class="info">0</span> 次</div>
-    <div id="feedback" class="feedback good">請側面側對鏡頭，準備下蹲</div>
+    <div id="feedback" class="feedback good">請讓全身側面入鏡，準備下蹲</div>
   </div>
   <div class="container">
     <video id="input_video" playsinline></video>
@@ -40,9 +40,9 @@
     let count = 0;
     let stage = 'up';
     let minKneeAngle = 180;
+    let downFrames = 0; // 下蹲防閃爍計數器
     let lastSpeechTime = 0;
 
-    // 手機語音提醒（避免重複密集的語音干擾）
     function speak(text) {
       const now = Date.now();
       if (now - lastSpeechTime > 2200) {
@@ -76,6 +76,11 @@
       }
     }
 
+    // 關節可信度過濾器
+    function isLandmarkValid(...pts) {
+      return pts.every(p => p && p.visibility > 0.65);
+    }
+
     function onResults(results) {
       canvasElement.width = videoElement.videoWidth || 640;
       canvasElement.height = videoElement.videoHeight || 480;
@@ -91,7 +96,8 @@
         const knee = landmarks[25];
         const ankle = landmarks[27];
 
-        if (shoulder && hip && knee && ankle) {
+        // 嚴格檢測：四個關鍵點的可信度皆須超過 65%
+        if (isLandmarkValid(shoulder, hip, knee, ankle)) {
           const kneeAngle = findAngle(hip, knee, ankle);
           const torsoLean = getTorsoLean(shoulder, hip);
           const kneeOverToe = (knee.x - ankle.x);
@@ -100,19 +106,28 @@
           let isWarning = false;
           let currentAdvice = "姿勢良好";
 
-          if (kneeAngle < 140) {
+          // 下蹲觸發門檻 (膝蓋角度 < 130)
+          if (kneeAngle < 130) {
+            downFrames++;
             if (kneeAngle < minKneeAngle) minKneeAngle = kneeAngle;
 
-            if (torsoLean > 40) {
-              currentAdvice = "⚠️ 上半身過度前傾！請挺胸";
-              isWarning = true;
-            } else if (kneeOverToe > 0.12) {
-              currentAdvice = "⚠️ 膝蓋過度前壓！重心往後移";
-              isWarning = true;
+            // 必須連續 3 個影格皆小於 130 度，排除雜訊誤跳
+            if (downFrames >= 3) {
+              stage = 'down';
+
+              if (torsoLean > 40) {
+                currentAdvice = "⚠️ 上半身過度前傾！請挺胸";
+                isWarning = true;
+              } else if (kneeOverToe > 0.12) {
+                currentAdvice = "⚠️ 膝蓋過度前壓！重心往後移";
+                isWarning = true;
+              }
             }
-            stage = 'down';
+          } else {
+            downFrames = Math.max(0, downFrames - 1);
           }
 
+          // 起身完成判定 (膝蓋角度 > 160 且曾進入過 down 階段)
           if (kneeAngle > 160 && stage === 'down') {
             if (minKneeAngle > 100) {
               setFeedback("⚠️ 蹲得不夠深！大腿需平行地面", true);
@@ -124,13 +139,17 @@
             }
             stage = 'up';
             minKneeAngle = 180;
+            downFrames = 0;
           } else if (stage === 'down') {
             setFeedback(currentAdvice, isWarning);
             skeletonColor = isWarning ? '#FF0000' : '#00FF00';
           }
-          
+
           drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: skeletonColor, lineWidth: 4});
           drawLandmarks(canvasCtx, landmarks, {color: '#FFFFFF', lineWidth: 2});
+        } else {
+          // 偵測點不清晰時重置下蹲狀態，防止留存錯誤數據
+          downFrames = 0;
         }
       }
       canvasCtx.restore();
@@ -143,8 +162,8 @@
     pose.setOptions({
       modelComplexity: 1,
       smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minDetectionConfidence: 0.65,
+      minTrackingConfidence: 0.65
     });
 
     pose.onResults(onResults);
