@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 深蹲計數器</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 15px; }
+    .status-card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 15px; font-size: 1.2rem; font-weight: bold; }
+    .highlight { color: #00ffcc; font-size: 1.6rem; }
+    .container { position: relative; width: 100%; max-width: 480px; margin: 0 auto; }
+    video { display: none; }
+    canvas { width: 100%; border-radius: 12px; background: #000; transform: scaleX(-1); }
+  </style>
+</head>
+<body>
+  <h2>🏋️‍♂️ AI 深蹲計數器</h2>
+  <div class="status-card">
+    次數：<span id="count" class="highlight">0</span> 次 | 狀態：<span id="stage" class="highlight">準備中</span>
+  </div>
+  <div class="container">
+    <video id="input_video" playsinline></video>
+    <canvas id="output_canvas"></canvas>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const countEl = document.getElementById('count');
+    const stageEl = document.getElementById('stage');
+
+    let count = 0;
+    let stage = null;
+
+    function findAngle(p1, p2, p3) {
+      let radians = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+      let angle = Math.abs(radians * 180.0 / Math.PI);
+      if (angle > 180.0) angle = 360 - angle;
+      return angle;
+    }
+
+    function onResults(results) {
+      canvasElement.width = videoElement.videoWidth || 640;
+      canvasElement.height = videoElement.videoHeight || 480;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.poseLandmarks) {
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
+        drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2});
+
+        const hip = results.poseLandmarks[23];  // 左髖
+        const knee = results.poseLandmarks[25]; // 左膝
+        const ankle = results.poseLandmarks[27];// 左腳踝
+
+        if (hip && knee && ankle) {
+          const angle = findAngle(hip, knee, ankle);
+
+          if (angle < 90) {
+            stage = "down";
+            stageEl.innerText = "深蹲中";
+          }
+          if (angle > 160 && stage === "down") {
+            stage = "up";
+            count++;
+            countEl.innerText = count;
+            stageEl.innerText = "完成";
+          }
+        }
+      }
+      canvasCtx.restore();
+    }
+
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => { await pose.send({image: videoElement}); },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+  </script>
+</body>
+</html>
