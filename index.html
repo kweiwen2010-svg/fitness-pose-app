@@ -9,11 +9,13 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 15px; }
-    .status-card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 15px; }
-    .feedback { font-size: 1.3rem; font-weight: bold; margin-top: 8px; padding: 8px 12px; border-radius: 8px; display: inline-block; }
+    .status-card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 12px; }
+    .feedback { font-size: 1.2rem; font-weight: bold; margin-top: 8px; padding: 8px 12px; border-radius: 8px; display: inline-block; }
     .good { background: #1b4332; color: #52b788; }
     .warning { background: #5c1d24; color: #ff6b6b; }
-    .info { color: #00ffcc; font-size: 1.2rem; font-weight: bold; }
+    .info { color: #00ffcc; font-size: 1.4rem; font-weight: bold; }
+    .btn { background: #007aff; color: white; border: none; padding: 14px 28px; font-size: 1.2rem; font-weight: bold; border-radius: 10px; cursor: pointer; margin-bottom: 12px; width: 100%; max-width: 480px; }
+    .btn-stop { background: #d90429; }
     .container { position: relative; width: 100%; max-width: 480px; margin: 0 auto; }
     video { display: none; }
     canvas { width: 100%; border-radius: 12px; background: #000; transform: scaleX(-1); }
@@ -21,10 +23,14 @@
 </head>
 <body>
   <h2>🏋️‍♂️ AI 深蹲姿勢矯正助手</h2>
+  
+  <button id="startBtn" class="btn" onclick="toggleCamera()">▶️ 按下開始運動</button>
+
   <div class="status-card">
-    <div>標準次數：<span id="count" class="info">0</span> 次</div>
-    <div id="feedback" class="feedback good">請讓全身側面入鏡，準備下蹲</div>
+    <div>標準深蹲：<span id="count" class="info">0</span> 次</div>
+    <div id="feedback" class="feedback good">請點擊「開始運動」啟動檢測</div>
   </div>
+
   <div class="container">
     <video id="input_video" playsinline></video>
     <canvas id="output_canvas"></canvas>
@@ -36,11 +42,14 @@
     const canvasCtx = canvasElement.getContext('2d');
     const countEl = document.getElementById('count');
     const feedbackEl = document.getElementById('feedback');
+    const startBtn = document.getElementById('startBtn');
 
+    let camera = null;
+    let isRunning = false;
     let count = 0;
     let stage = 'up';
     let minKneeAngle = 180;
-    let downFrames = 0; // 下蹲防閃爍計數器
+    let downFrames = 0;
     let lastSpeechTime = 0;
 
     function speak(text) {
@@ -50,6 +59,23 @@
         utterance.lang = 'zh-TW';
         window.speechSynthesis.speak(utterance);
         lastSpeechTime = now;
+      }
+    }
+
+    function toggleCamera() {
+      if (!isRunning) {
+        // 解鎖手機聲音與播放權限
+        speak("開始檢測，請站遠讓全身入鏡");
+        startBtn.innerText = "⏹️ 停止運動";
+        startBtn.classList.add("btn-stop");
+        isRunning = true;
+        initCamera();
+      } else {
+        if (camera) camera.stop();
+        startBtn.innerText = "▶️ 按下開始運動";
+        startBtn.classList.remove("btn-stop");
+        isRunning = false;
+        setFeedback("已暫停運動", false);
       }
     }
 
@@ -76,11 +102,6 @@
       }
     }
 
-    // 關節可信度過濾器
-    function isLandmarkValid(...pts) {
-      return pts.every(p => p && p.visibility > 0.65);
-    }
-
     function onResults(results) {
       canvasElement.width = videoElement.videoWidth || 640;
       canvasElement.height = videoElement.videoHeight || 480;
@@ -91,28 +112,35 @@
 
       if (results.poseLandmarks) {
         const landmarks = results.poseLandmarks;
+        
+        // 只要抓到骨架就畫出連線，讓使用者確定 AI 有在運作
+        drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+        drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
+
         const shoulder = landmarks[11];
         const hip = landmarks[23];
         const knee = landmarks[25];
         const ankle = landmarks[27];
 
-        // 嚴格檢測：四個關鍵點的可信度皆須超過 65%
-        if (isLandmarkValid(shoulder, hip, knee, ankle)) {
+        // 檢查關鍵部位（髖、膝、腳踝）是否完整拍到
+        const hasFullBody = hip && knee && ankle && hip.visibility > 0.5 && knee.visibility > 0.5 && ankle.visibility > 0.5;
+
+        if (!hasFullBody) {
+          setFeedback("⚠️ 請往後退，讓雙腳與腳踝入鏡！", true);
+          downFrames = 0;
+        } else {
           const kneeAngle = findAngle(hip, knee, ankle);
           const torsoLean = getTorsoLean(shoulder, hip);
           const kneeOverToe = (knee.x - ankle.x);
 
-          let skeletonColor = '#00FF00';
           let isWarning = false;
-          let currentAdvice = "姿勢良好";
+          let currentAdvice = "全身已鎖定，請開始下蹲";
 
-          // 下蹲觸發門檻 (膝蓋角度 < 130)
           if (kneeAngle < 130) {
             downFrames++;
             if (kneeAngle < minKneeAngle) minKneeAngle = kneeAngle;
 
-            // 必須連續 3 個影格皆小於 130 度，排除雜訊誤跳
-            if (downFrames >= 3) {
+            if (downFrames >= 2) {
               stage = 'down';
 
               if (torsoLean > 40) {
@@ -127,7 +155,6 @@
             downFrames = Math.max(0, downFrames - 1);
           }
 
-          // 起身完成判定 (膝蓋角度 > 160 且曾進入過 down 階段)
           if (kneeAngle > 160 && stage === 'down') {
             if (minKneeAngle > 100) {
               setFeedback("⚠️ 蹲得不夠深！大腿需平行地面", true);
@@ -142,15 +169,12 @@
             downFrames = 0;
           } else if (stage === 'down') {
             setFeedback(currentAdvice, isWarning);
-            skeletonColor = isWarning ? '#FF0000' : '#00FF00';
+          } else if (stage === 'up' && !isWarning) {
+            setFeedback(currentAdvice, false);
           }
-
-          drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: skeletonColor, lineWidth: 4});
-          drawLandmarks(canvasCtx, landmarks, {color: '#FFFFFF', lineWidth: 2});
-        } else {
-          // 偵測點不清晰時重置下蹲狀態，防止留存錯誤數據
-          downFrames = 0;
         }
+      } else {
+        setFeedback("尋找人體骨架中...", false);
       }
       canvasCtx.restore();
     }
@@ -162,18 +186,22 @@
     pose.setOptions({
       modelComplexity: 1,
       smoothLandmarks: true,
-      minDetectionConfidence: 0.65,
-      minTrackingConfidence: 0.65
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
     });
 
     pose.onResults(onResults);
 
-    const camera = new Camera(videoElement, {
-      onFrame: async () => { await pose.send({image: videoElement}); },
-      width: 640,
-      height: 480
-    });
-    camera.start();
+    function initCamera() {
+      camera = new Camera(videoElement, {
+        onFrame: async () => {
+          if (isRunning) await pose.send({image: videoElement});
+        },
+        width: 640,
+        height: 480
+      });
+      camera.start();
+    }
   </script>
 </body>
 </html>
