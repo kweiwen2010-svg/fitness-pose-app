@@ -51,12 +51,13 @@
     let minKneeAngle = 180;
     let downFrames = 0;
     let lastSpeechTime = 0;
-    let lastSpokenText = ""; // 避免語音重複跳針
+    let lastSpokenText = "";
 
     function speak(text) {
+      if (!isRunning) return; // 如果已經停止，絕對不發聲
       const now = Date.now();
-      // 相同文字不重複念，避免語音疲勞與干擾
       if (text !== lastSpokenText || (now - lastSpeechTime > 6000)) {
+        window.speechSynthesis.cancel(); // 播放新語音前先清除舊的
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'zh-TW';
         window.speechSynthesis.speak(utterance);
@@ -67,16 +68,17 @@
 
     function toggleCamera() {
       if (!isRunning) {
+        isRunning = true;
         speak("開始檢測，請側對鏡頭站立");
         startBtn.innerText = "⏹️ 停止運動";
         startBtn.classList.add("btn-stop");
-        isRunning = true;
         initCamera();
       } else {
+        isRunning = false;
         if (camera) camera.stop();
+        window.speechSynthesis.cancel(); // ⚠️ 點擊停止時強制終止所有語音
         startBtn.innerText = "▶️ 按下開始運動";
         startBtn.classList.remove("btn-stop");
-        isRunning = false;
         setFeedback("已暫停運動", false);
       }
     }
@@ -105,6 +107,8 @@
     }
 
     function onResults(results) {
+      if (!isRunning) return; // 沒在運動就直接跳過
+
       canvasElement.width = videoElement.videoWidth || 640;
       canvasElement.height = videoElement.videoHeight || 480;
 
@@ -123,7 +127,6 @@
         const knee = landmarks[25];
         const ankle = landmarks[27];
 
-        // 降低門檻至 0.4，距離改為 1.5 ~ 2 公尺即可
         const hasFullBody = hip && knee && ankle && hip.visibility > 0.4 && knee.visibility > 0.4 && ankle.visibility > 0.4;
 
         if (!hasFullBody) {
