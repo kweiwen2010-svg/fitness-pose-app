@@ -51,21 +51,23 @@
     let minKneeAngle = 180;
     let downFrames = 0;
     let lastSpeechTime = 0;
+    let lastSpokenText = ""; // 避免語音重複跳針
 
     function speak(text) {
       const now = Date.now();
-      if (now - lastSpeechTime > 2200) {
+      // 相同文字不重複念，避免語音疲勞與干擾
+      if (text !== lastSpokenText || (now - lastSpeechTime > 6000)) {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'zh-TW';
         window.speechSynthesis.speak(utterance);
         lastSpeechTime = now;
+        lastSpokenText = text;
       }
     }
 
     function toggleCamera() {
       if (!isRunning) {
-        // 解鎖手機聲音與播放權限
-        speak("開始檢測，請站遠讓全身入鏡");
+        speak("開始檢測，請側對鏡頭站立");
         startBtn.innerText = "⏹️ 停止運動";
         startBtn.classList.add("btn-stop");
         isRunning = true;
@@ -113,7 +115,6 @@
       if (results.poseLandmarks) {
         const landmarks = results.poseLandmarks;
         
-        // 只要抓到骨架就畫出連線，讓使用者確定 AI 有在運作
         drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
         drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
 
@@ -122,11 +123,11 @@
         const knee = landmarks[25];
         const ankle = landmarks[27];
 
-        // 檢查關鍵部位（髖、膝、腳踝）是否完整拍到
-        const hasFullBody = hip && knee && ankle && hip.visibility > 0.5 && knee.visibility > 0.5 && ankle.visibility > 0.5;
+        // 降低門檻至 0.4，距離改為 1.5 ~ 2 公尺即可
+        const hasFullBody = hip && knee && ankle && hip.visibility > 0.4 && knee.visibility > 0.4 && ankle.visibility > 0.4;
 
         if (!hasFullBody) {
-          setFeedback("⚠️ 請往後退，讓雙腳與腳踝入鏡！", true);
+          setFeedback("⚠️ 請調整手機距離（約1.5至2公尺），全身側面入鏡", true);
           downFrames = 0;
         } else {
           const kneeAngle = findAngle(hip, knee, ankle);
@@ -134,9 +135,9 @@
           const kneeOverToe = (knee.x - ankle.x);
 
           let isWarning = false;
-          let currentAdvice = "全身已鎖定，請開始下蹲";
+          let currentAdvice = "✅ 全身已鎖定，請開始下蹲";
 
-          if (kneeAngle < 130) {
+          if (kneeAngle < 135) {
             downFrames++;
             if (kneeAngle < minKneeAngle) minKneeAngle = kneeAngle;
 
@@ -146,7 +147,7 @@
               if (torsoLean > 40) {
                 currentAdvice = "⚠️ 上半身過度前傾！請挺胸";
                 isWarning = true;
-              } else if (kneeOverToe > 0.12) {
+              } else if (kneeOverToe > 0.15) {
                 currentAdvice = "⚠️ 膝蓋過度前壓！重心往後移";
                 isWarning = true;
               }
@@ -156,8 +157,8 @@
           }
 
           if (kneeAngle > 160 && stage === 'down') {
-            if (minKneeAngle > 100) {
-              setFeedback("⚠️ 蹲得不夠深！大腿需平行地面", true);
+            if (minKneeAngle > 105) {
+              setFeedback("⚠️ 蹲得不夠深！大腿需更接近水平", true);
             } else if (!isWarning) {
               count++;
               countEl.innerText = count;
@@ -186,8 +187,8 @@
     pose.setOptions({
       modelComplexity: 1,
       smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minDetectionConfidence: 0.4,
+      minTrackingConfidence: 0.4
     });
 
     pose.onResults(onResults);
