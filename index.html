@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI 深蹲姿勢矯正助手</title>
+  <title>AI 深蹲姿勢矯正助手 (前鏡頭 + 畫面縮放版)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
@@ -16,19 +16,32 @@
     .info { color: #00ffcc; font-size: 1.4rem; font-weight: bold; }
     .btn { background: #007aff; color: white; border: none; padding: 14px 28px; font-size: 1.2rem; font-weight: bold; border-radius: 10px; cursor: pointer; margin-bottom: 12px; width: 100%; max-width: 480px; }
     .btn-stop { background: #d90429; }
-    .container { position: relative; width: 100%; max-width: 480px; margin: 0 auto; }
+    
+    /* 畫面縮放控制卡片 */
+    .zoom-control-card { background: #1e1e1e; padding: 12px; border-radius: 12px; margin-bottom: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .zoom-control-card label { font-weight: bold; font-size: 1.1rem; color: #00ffcc; }
+    .zoom-control-card input[type="range"] { width: 100%; max-width: 480px; }
+    
+    .container { position: relative; width: 100%; max-width: 480px; margin: 0 auto; overflow: hidden; /* 防止 canvas 溢出 */ border-radius: 12px; }
     video { display: none; }
-    canvas { width: 100%; border-radius: 12px; background: #000; transform: scaleX(-1); }
+    
+    /* canvas CSS transform 初始化，添加縮放支持與過度 */
+    canvas { width: 100%; height: auto; display: block; border-radius: 12px; background: #000; transform: scaleX(-1) scale(1.0); transform-origin: top center; /* 以頂部中央為原點縮放 */ transition: transform 0.1s ease-out; /* 平滑過度 */ }
   </style>
 </head>
 <body>
   <h2>🏋️‍♂️ AI 深蹲姿勢矯正助手</h2>
   
+  <div class="zoom-control-card">
+    <label for="screenZoomRange">🔍 畫面縮放：<span id="screenZoomVal">1.0</span>x</label>
+    <input type="range" id="screenZoomRange" min="0.5" max="2.0" step="0.1" value="1.0" oninput="updateScreenZoom(this.value)">
+  </div>
+
   <button id="startBtn" class="btn" onclick="toggleCamera()">▶️ 按下開始運動</button>
 
   <div class="status-card">
     <div>標準深蹲：<span id="count" class="info">0</span> 次</div>
-    <div id="feedback" class="feedback good">請點擊「開始運動」啟動檢測</div>
+    <div id="feedback" class="feedback good">點擊「開始運動」啟動檢測</div>
   </div>
 
   <div class="container">
@@ -52,14 +65,24 @@
     let downFrames = 0;
     let lastSpeechTime = 0;
     let lastSpokenText = "";
+    let screenZoom = 1.0; // 初始化畫面縮放級別
+
+    // 畫面縮放控制函數
+    function updateScreenZoom(val) {
+      screenZoom = parseFloat(val);
+      document.getElementById('screenZoomVal').innerText = screenZoom.toFixed(1);
+      // 將縮放應用於 canvas 的 transform 樣式
+      canvasElement.style.transform = `scaleX(-1) scale(${screenZoom})`;
+    }
 
     function speak(text) {
-      if (!isRunning) return; // 如果已經停止，絕對不發聲
+      if (!isRunning) return;
       const now = Date.now();
-      if (text !== lastSpokenText || (now - lastSpeechTime > 6000)) {
-        window.speechSynthesis.cancel(); // 播放新語音前先清除舊的
+      if (text !== lastSpokenText || (now - lastSpeechTime > 3000)) {
+        window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'zh-TW';
+        utterance.rate = 1.1; 
         window.speechSynthesis.speak(utterance);
         lastSpeechTime = now;
         lastSpokenText = text;
@@ -69,17 +92,17 @@
     function toggleCamera() {
       if (!isRunning) {
         isRunning = true;
-        speak("開始檢測，請側對鏡頭站立");
+        speak("開始檢測");
         startBtn.innerText = "⏹️ 停止運動";
         startBtn.classList.add("btn-stop");
         initCamera();
       } else {
         isRunning = false;
         if (camera) camera.stop();
-        window.speechSynthesis.cancel(); // ⚠️ 點擊停止時強制終止所有語音
+        window.speechSynthesis.cancel();
         startBtn.innerText = "▶️ 按下開始運動";
         startBtn.classList.remove("btn-stop");
-        setFeedback("已暫停運動", false);
+        setUIFeedback("已暫停運動", false);
       }
     }
 
@@ -96,18 +119,16 @@
       return Math.abs(Math.atan2(dx, -dy) * 180.0 / Math.PI);
     }
 
-    function setFeedback(msg, isWarning = false) {
+    function setUIFeedback(msg, isWarning = false, audioMsg = null) {
       feedbackEl.innerText = msg;
-      if (isWarning) {
-        feedbackEl.className = "feedback warning";
-        speak(msg.replace('⚠️ ', ''));
-      } else {
-        feedbackEl.className = "feedback good";
+      feedbackEl.className = isWarning ? "feedback warning" : "feedback good";
+      if (audioMsg) {
+        speak(audioMsg);
       }
     }
 
     function onResults(results) {
-      if (!isRunning) return; // 沒在運動就直接跳過
+      if (!isRunning) return;
 
       canvasElement.width = videoElement.videoWidth || 640;
       canvasElement.height = videoElement.videoHeight || 480;
@@ -119,26 +140,33 @@
       if (results.poseLandmarks) {
         const landmarks = results.poseLandmarks;
         
-        drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
-        drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
+        let isBodyWarning = false;
+        let currentBodyAdvice = "✅ 全身已鎖定，請開始下蹲";
+        let bodyAudioAdvice = null;
 
         const shoulder = landmarks[11];
         const hip = landmarks[23];
         const knee = landmarks[25];
         const ankle = landmarks[27];
 
-        const hasFullBody = hip && knee && ankle && hip.visibility > 0.4 && knee.visibility > 0.4 && ankle.visibility > 0.4;
+        const hasBodyPart = hip && knee && hip.visibility > 0.3 && knee.visibility > 0.3;
 
-        if (!hasFullBody) {
-          setFeedback("⚠️ 請調整手機距離（約1.5至2公尺），全身側面入鏡", true);
+        if (!hasBodyPart) {
+          currentBodyAdvice = "⚠️ 請調整畫面與位置，全身側面入鏡";
+          isBodyWarning = true;
+          setUIFeedback(currentBodyAdvice, isBodyWarning, null);
           downFrames = 0;
+          skeletonColor = '#FF0000';
         } else {
-          const kneeAngle = findAngle(hip, knee, ankle);
-          const torsoLean = getTorsoLean(shoulder, hip);
-          const kneeOverToe = (knee.x - ankle.x);
+          const currentAnkle = (ankle && ankle.visibility > 0.3) ? ankle : { x: knee.x, y: knee.y + 0.3 };
+          
+          const kneeAngle = findAngle(hip, knee, currentAnkle);
+          const torsoLean = shoulder ? getTorsoLean(shoulder, hip) : 0;
+          const kneeOverToe = (knee.x - currentAnkle.x);
 
-          let isWarning = false;
-          let currentAdvice = "✅ 全身已鎖定，請開始下蹲";
+          let isPostureWarning = false;
+          let currentPostureAdvice = "✅ 全身已鎖定，請開始下蹲";
+          let postureAudioAdvice = null;
 
           if (kneeAngle < 135) {
             downFrames++;
@@ -148,11 +176,13 @@
               stage = 'down';
 
               if (torsoLean > 40) {
-                currentAdvice = "⚠️ 上半身過度前傾！請挺胸";
-                isWarning = true;
+                currentPostureAdvice = "⚠️ 上半身過度前傾！請挺胸";
+                postureAudioAdvice = "請挺胸";
+                isPostureWarning = true;
               } else if (kneeOverToe > 0.15) {
-                currentAdvice = "⚠️ 膝蓋過度前壓！重心往後移";
-                isWarning = true;
+                currentPostureAdvice = "⚠️ 膝蓋過度前壓！重心往後移";
+                postureAudioAdvice = "重心往後";
+                isPostureWarning = true;
               }
             }
           } else {
@@ -161,24 +191,26 @@
 
           if (kneeAngle > 160 && stage === 'down') {
             if (minKneeAngle > 105) {
-              setFeedback("⚠️ 蹲得不夠深！大腿需更接近水平", true);
-            } else if (!isWarning) {
+              setUIFeedback("⚠️ 蹲得不夠深！大腿需更接近水平", true, "蹲深一點");
+            } else if (!isPostureWarning) {
               count++;
               countEl.innerText = count;
-              setFeedback("✅ 標準深蹲 +1！", false);
-              speak("標準");
+              setUIFeedback("✅ 標準深蹲 +1！", false, "標準");
             }
             stage = 'up';
             minKneeAngle = 180;
             downFrames = 0;
           } else if (stage === 'down') {
-            setFeedback(currentAdvice, isWarning);
-          } else if (stage === 'up' && !isWarning) {
-            setFeedback(currentAdvice, false);
+            setUIFeedback(currentPostureAdvice, isPostureWarning, postureAudioAdvice);
+          } else if (stage === 'up' && !isPostureWarning) {
+            setUIFeedback(currentPostureAdvice, false, null);
           }
+          skeletonColor = isPostureWarning ? '#FF0000' : '#00FF00';
         }
+        drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: skeletonColor, lineWidth: 3});
+        drawLandmarks(canvasCtx, landmarks, {color: '#FFFFFF', lineWidth: 2});
       } else {
-        setFeedback("尋找人體骨架中...", false);
+        setUIFeedback("尋找人體骨架中...", false, null);
       }
       canvasCtx.restore();
     }
@@ -190,8 +222,8 @@
     pose.setOptions({
       modelComplexity: 1,
       smoothLandmarks: true,
-      minDetectionConfidence: 0.4,
-      minTrackingConfidence: 0.4
+      minDetectionConfidence: 0.3,
+      minTrackingConfidence: 0.3
     });
 
     pose.onResults(onResults);
@@ -202,7 +234,8 @@
           if (isRunning) await pose.send({image: videoElement});
         },
         width: 640,
-        height: 480
+        height: 480,
+        facingMode: 'user' // 強制使用前鏡頭
       });
       camera.start();
     }
